@@ -536,8 +536,9 @@ struct {
   uint8_t       eth_type;                  // 446
   uint8_t       eth_clk_mode;              // 447
 
-  uint8_t       free_esp32_448[4];         // 448
-
+  uint8_t       free_esp32_448[2];         // 448
+  
+  uint16_t      webcam_post_port;          // 44A
   WebCamCfg     webcam_config;             // 44C
   uint8_t       eth_address;               // 450
 #endif  // ESP32

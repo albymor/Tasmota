@@ -695,6 +695,141 @@ void HandleImage(void) {
   AddLog(LOG_LEVEL_DEBUG_MORE, PSTR("CAM: Sending image #: %d"), bnum+1);
 }
 
+bool UploadImage(void)
+{
+  if (strlen(SettingsText(SET_POST_URL)) == 0)
+  {
+    // probably the url is not set, so return error
+    return false;
+  }
+
+  char *serverNameFull = (char *)calloc(strlen(SettingsText(SET_POST_URL)) + 1, sizeof(char));
+  memcpy_P(serverNameFull, SettingsText(SET_POST_URL), strlen(SettingsText(SET_POST_URL)));
+
+  char *serverName = strtok(serverNameFull, "/");
+  char *serverPath = strtok(NULL, "/");
+
+  AddLog(LOG_LEVEL_DEBUG, PSTR("CAM: Server name %s"), serverName);
+  AddLog(LOG_LEVEL_DEBUG, PSTR("CAM: Server path %s"), serverPath);
+
+  uint16_t serverPort = Settings.webcam_post_port;
+  if (serverPort == 0)
+  {
+    serverPort = 80;
+  }
+  
+  WiFiClient client;
+
+  String getAll;
+  String getBody;
+
+  size_t _jpg_buf_len = 0;
+  uint8_t *_jpg_buf = NULL;
+  camera_fb_t *wc_fb = 0;
+  wc_fb = esp_camera_fb_get();
+  if (!wc_fb)
+  {
+    return false;
+  }
+  if (wc_fb->format != PIXFORMAT_JPEG)
+  {
+    bool jpeg_converted = frame2jpg(wc_fb, 80, &_jpg_buf, &_jpg_buf_len);
+    if (!jpeg_converted)
+    {
+      _jpg_buf_len = wc_fb->len;
+      _jpg_buf = wc_fb->buf;
+    }
+  }
+  else
+  {
+    _jpg_buf_len = wc_fb->len;
+    _jpg_buf = wc_fb->buf;
+  }
+  if (_jpg_buf_len)
+  {
+    AddLog(LOG_LEVEL_DEBUG, PSTR("CAM: Succesfully connected to %s port %d"), SettingsText(SET_POST_URL), serverPort);
+
+    /* Inspired by https://randomnerdtutorials.com/esp32-cam-post-image-photo-server/ */
+    if (client.connect(serverName, serverPort))
+    {
+      String head = F("--" BOUNDARY "\r\nContent-Disposition: form-data; name=\"imageFile\"; filename=\"esp32-cam.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n");
+      String tail = F("\r\n--" BOUNDARY "--\r\n");
+      uint32_t imageLen = wc_fb->len;
+      uint32_t extraLen = head.length() + tail.length();
+      uint32_t totalLen = imageLen + extraLen;
+
+      client.println("POST /" + String(serverPath) + " HTTP/1.1");
+      client.println("Host: " + String(serverName));
+      client.println("Content-Length: " + String(totalLen));
+      client.println(F("Content-Type: multipart/form-data; boundary=" BOUNDARY));
+      client.println();
+      client.print(head);
+
+      uint8_t *wc_fbBuf = wc_fb->buf;
+      size_t wc_fbLen = wc_fb->len;
+      for (size_t n = 0; n < wc_fbLen; n = n + 1024)
+      {
+        if (n + 1024 < wc_fbLen)
+        {
+          client.write(wc_fbBuf, 1024);
+          wc_fbBuf += 1024;
+        }
+        else if (wc_fbLen % 1024 > 0)
+        {
+          size_t remainder = wc_fbLen % 1024;
+          client.write(wc_fbBuf, remainder);
+        }
+      }
+      client.print(tail);
+      free(serverNameFull);
+    }
+  }
+  if (wc_fb)
+  {
+    esp_camera_fb_return(wc_fb);
+  }
+
+  int timoutTimer = 10000;
+  long startTimer = millis();
+  boolean state = false;
+
+  while ((startTimer + timoutTimer) > millis())
+  {
+    Serial.print(".");
+    delay(100);
+    while (client.available())
+    {
+      char c = client.read();
+      if (c == '\n')
+      {
+        if (getAll.length() == 0)
+        {
+          state = true;
+        }
+        getAll = "";
+      }
+      else if (c != '\r')
+      {
+        getAll += String(c);
+      }
+      if (state == true)
+      {
+        getBody += String(c);
+      }
+      startTimer = millis();
+    }
+    if (getBody.length() > 0)
+    {
+      break;
+    }
+  }
+  Serial.println();
+  client.stop();
+  Serial.println(getBody);
+
+  return true;
+}
+
 void HandleImageBasic(void) {
   if (!HttpCheckPriviledgedAccess()) { return; }
 
@@ -966,6 +1101,9 @@ void WcInit(void) {
 #define D_CMND_WC_CONTRAST "Contrast"
 #define D_CMND_WC_INIT "Init"
 #define D_CMND_RTSP "Rtsp"
+#define D_CMND_UPLOAD "Upload"
+#define D_CMND_POSTURL "PostUrl"
+#define D_CMND_POSTPORT "PostPort"
 
 const char kWCCommands[] PROGMEM =  D_PRFX_WEBCAM "|"  // Prefix
   "|" D_CMND_WC_STREAM "|" D_CMND_WC_RESOLUTION "|" D_CMND_WC_MIRROR "|" D_CMND_WC_FLIP "|"
@@ -973,6 +1111,9 @@ const char kWCCommands[] PROGMEM =  D_PRFX_WEBCAM "|"  // Prefix
 #ifdef ENABLE_RTSPSERVER
   "|" D_CMND_RTSP
 #endif // ENABLE_RTSPSERVER
+  "|" D_CMND_UPLOAD
+  "|" D_CMND_POSTURL
+  "|" D_CMND_POSTPORT
   ;
 
 void (* const WCCommand[])(void) PROGMEM = {
@@ -981,6 +1122,9 @@ void (* const WCCommand[])(void) PROGMEM = {
 #ifdef ENABLE_RTSPSERVER
   , &CmndWebRtsp
 #endif // ENABLE_RTSPSERVER
+  , &CmndWebUpload
+  , &CmndWebPostUrl
+  , &CmndWebPostPort
   };
 
 void CmndWebcam(void) {
@@ -1071,7 +1215,36 @@ void CmndWebRtsp(void) {
 }
 #endif // ENABLE_RTSPSERVER
 
+void CmndWebUpload(void)
+{
+  UploadImage();
+  ResponseCmndDone();
+}
 
+void CmndWebPostUrl(void)
+{
+  if (SettingsUpdateText(SET_POST_URL, PSTR(XdrvMailbox.data)))
+  {
+    ResponseCmndDone();
+  }
+  else
+  {
+    ResponseCmndError();
+  }   
+}
+
+void CmndWebPostPort(void)
+{
+  if (XdrvMailbox.payload > 0U)
+  {
+    Settings.webcam_post_port = (uint16_t)XdrvMailbox.payload;
+    ResponseCmndDone();
+  }
+  else
+  {
+    ResponseCmndError();
+  }
+}
 /*********************************************************************************************\
  * Interface
 \*********************************************************************************************/

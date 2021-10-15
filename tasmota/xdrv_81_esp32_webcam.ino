@@ -720,9 +720,6 @@ bool UploadImage(void)
   
   WiFiClient client;
 
-  String getAll;
-  String getBody;
-
   size_t _jpg_buf_len = 0;
   uint8_t *_jpg_buf = NULL;
   camera_fb_t *wc_fb = 0;
@@ -752,7 +749,8 @@ bool UploadImage(void)
     /* Inspired by https://randomnerdtutorials.com/esp32-cam-post-image-photo-server/ */
     if (client.connect(serverName, serverPort))
     {
-      String head = F("--" BOUNDARY "\r\nContent-Disposition: form-data; name=\"imageFile\"; filename=\"esp32-cam.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n");
+      String fname = String(TasmotaGlobal.mqtt_topic);
+      String head = ("--" BOUNDARY "\r\nContent-Disposition: form-data; name=\"imageFile\"; filename=\"") + fname + (".jpg\"\r\nContent-Type: image/jpeg\r\n\r\n");
       String tail = F("\r\n--" BOUNDARY "--\r\n");
       uint32_t imageLen = wc_fb->len;
       uint32_t extraLen = head.length() + tail.length();
@@ -790,42 +788,25 @@ bool UploadImage(void)
   }
 
   int timoutTimer = 10000;
-  long startTimer = millis();
-  boolean state = false;
+  long tick = millis();
+  String clientResponse;
 
-  while ((startTimer + timoutTimer) > millis())
+  while ((tick + timoutTimer) > millis())
   {
-    Serial.print(".");
     delay(100);
     while (client.available())
     {
       char c = client.read();
-      if (c == '\n')
-      {
-        if (getAll.length() == 0)
-        {
-          state = true;
-        }
-        getAll = "";
-      }
-      else if (c != '\r')
-      {
-        getAll += String(c);
-      }
-      if (state == true)
-      {
-        getBody += String(c);
-      }
-      startTimer = millis();
+      clientResponse += String(c);
+      tick = millis();
     }
-    if (getBody.length() > 0)
+    if (clientResponse.length() > 0)
     {
       break;
     }
   }
-  Serial.println();
   client.stop();
-  Serial.println(getBody);
+  AddLog(LOG_LEVEL_DEBUG_MORE, clientResponse.c_str());
 
   return true;
 }

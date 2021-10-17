@@ -175,7 +175,9 @@ enum UserSelectablePins {
   GPIO_BL0939_RX,                      // BL0939 Serial interface (Dual R3 v2)
   GPIO_BL0942_RX,                      // BL0942 Serial interface
   GPIO_HM330X_SET,                     // HM330X SET pin (sleep when low)
-  GPIO_SENSOR_END };
+  GPIO_ALADINO_RF,                     // Thermorossi Aladino RF Send 
+  GPIO_SENSOR_END
+  };
 
 enum ProgramSelectablePins {
   GPIO_FIX_START = 2046,
@@ -369,7 +371,8 @@ const char kSensorNames[] PROGMEM =
   D_SENSOR_VINDRIKTNING_RX "|"
   D_SENSOR_BL0939_RX "|"
   D_SENSOR_BL0942_RX "|"
-  D_SENSOR_HM330X_SET
+  D_SENSOR_HM330X_SET "|"
+  D_SENSOR_ALADINO_RF
   ;
 
 const char kSensorNamesFixed[] PROGMEM =
@@ -615,6 +618,9 @@ const uint16_t kGpioNiceList[] PROGMEM = {
   AGPIO(GPIO_RFSEND),         // RF transmitter
   AGPIO(GPIO_RFRECV),         // RF receiver
 #endif
+//#ifdef USE_ALADINO
+  AGPIO(GPIO_ALADINO_RF),      // Thermorossi Aladino RF Send
+//#endif
 #ifdef USE_RF_SENSOR
   AGPIO(GPIO_RF_SENSOR),      // Rf receiver with sensor decoding
 #endif

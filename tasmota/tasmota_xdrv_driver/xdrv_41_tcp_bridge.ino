@@ -430,7 +430,19 @@ void TCPJsonAppend(void)
   AddLog(LOG_LEVEL_DEBUG_MORE, PSTR(D_LOG_TCP "TCP Sending tele"));
 }
 
-
+void TCPWebsensors(void)
+{
+  WSContentSend_Voltage("Battery", lastValidChargerData.batteryVoltage/1000.0);
+  WSContentSend_Voltage("Panel", lastValidChargerData.panelVoltage/1000.0);
+  WSContentSend_Voltage("Target", lastValidChargerData.batteryTargetVoltage/1000.0);
+  WSContentSend_Voltage("Vdd", lastValidChargerData.vdd/1000.0);
+  WSContentSend_CurrentMA("Charge", lastValidChargerData.current);
+  WSContentSend_PD(PSTR("{s}PWM {m}%d"), lastValidChargerData.pwm);
+  WSContentSend_PD(PSTR("{s}Charger State {m}%d"), lastValidChargerData.chargerState);
+  WSContentSend_PD(PSTR("{s}Load State {m}%d"), lastValidChargerData.loadState);
+  WSContentSend_PD(PSTR("{s}Comm. Counter {m}%d"), lastValidChargerData.commandCounter);
+  WSContentSend_PD(PSTR("{s}Last Error {m}%d"), lastValidChargerData.lastError);
+}
 /*********************************************************************************************\
  * Interface
 \*********************************************************************************************/
@@ -440,6 +452,9 @@ bool Xdrv41(uint32_t function)
   bool result = false;
 
   switch (function) {
+    case FUNC_WEB_SENSOR:
+        TCPWebsensors();
+        break;
     case FUNC_JSON_APPEND:
       TCPJsonAppend();
       break;

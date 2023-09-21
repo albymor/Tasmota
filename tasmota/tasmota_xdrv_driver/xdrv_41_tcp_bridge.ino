@@ -425,7 +425,7 @@ void CmndTCPConnect(void) {
 void TCPJsonAppend(void)
 {
   //AddLog(LOG_LEVEL_INFO, PSTR(D_LOG_TCP "TCP server aa"));
-  ResponseAppend_P(PSTR(",\"Charge Controller\":{\"Battery Voltage\":\"%i\",\"Panel Voltage\":%i,\"Charger State\":%i,\"PWM\":%i,\"Vdd\":%i,\"Target Voltage\":%i,\"Load State\":%i,\"Current\":%i,\"Comm. Counter\":%i,\"lastError\":%i,}"),
+  ResponseAppend_P(PSTR(",\"Charge Controller\":{\"Battery Voltage\":\"%i\",\"Panel Voltage\":%i,\"Charger State\":%i,\"PWM\":%i,\"Vdd\":%i,\"Target Voltage\":%i,\"Load State\":%i,\"Current\":%i,\"Comm Counter\":%i,\"lastError\":%i}"),
           lastValidChargerData.batteryVoltage, lastValidChargerData.panelVoltage, lastValidChargerData.chargerState, lastValidChargerData.pwm, lastValidChargerData.vdd, lastValidChargerData.batteryTargetVoltage, lastValidChargerData.loadState, lastValidChargerData.current, lastValidChargerData.commandCounter, lastValidChargerData.lastError);
   AddLog(LOG_LEVEL_DEBUG_MORE, PSTR(D_LOG_TCP "TCP Sending tele"));
 }
@@ -440,7 +440,7 @@ void TCPWebsensors(void)
   WSContentSend_PD(PSTR("{s}PWM {m}%d"), lastValidChargerData.pwm);
   WSContentSend_PD(PSTR("{s}Charger State {m}%d"), lastValidChargerData.chargerState);
   WSContentSend_PD(PSTR("{s}Load State {m}%d"), lastValidChargerData.loadState);
-  WSContentSend_PD(PSTR("{s}Comm. Counter {m}%d"), lastValidChargerData.commandCounter);
+  WSContentSend_PD(PSTR("{s}Comm Counter {m}%d"), lastValidChargerData.commandCounter);
   WSContentSend_PD(PSTR("{s}Last Error {m}%d"), lastValidChargerData.lastError);
 }
 /*********************************************************************************************\

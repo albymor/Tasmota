@@ -38,7 +38,35 @@ uint8_t     *tcp_buf = nullptr;     // data transfer buffer
 bool         ip_filter_enabled = false;
 IPAddress    ip_filter;
 
+
+
+
 #include <TasmotaSerial.h>
+
+typedef struct
+{
+	uint32_t header;
+	uint32_t batteryVoltage;
+	uint32_t panelVoltage;
+	uint8_t chargerState;
+	uint16_t pwm;
+	uint32_t vdd;
+	uint16_t batteryTargetVoltage;
+	uint8_t loadState;
+	int32_t current;
+	uint8_t commandCounter;
+	uint8_t lastError;
+	uint16_t tail;
+} CommData;
+
+CommData chargerData, lastValidChargerData;
+
+#define COB_BUFFER_LEN 64
+uint8_t cobBuffer[COB_BUFFER_LEN], decodeData[COB_BUFFER_LEN];
+uint8_t datalen, writeindex, decoded_len;
+
+void unpackData(const uint8_t* dataArray, uint8_t dataArrayLength, CommData* chargerData);
+
 TasmotaSerial *TCPSerial = nullptr;
 
 const char kTCPCommands[] PROGMEM = "TCP" "|"    // prefix
@@ -48,6 +76,102 @@ const char kTCPCommands[] PROGMEM = "TCP" "|"    // prefix
 void (* const TCPCommand[])(void) PROGMEM = {
   &CmndTCPStart, &CmndTCPBaudrate, &CmndTCPConfig, &CmndTCPConnect
   };
+
+
+void unpackData(const uint8_t* dataArray, uint8_t dataArrayLength, CommData* chargerData)
+{
+    // Check if dataArray has enough bytes to fill the structure
+    if (dataArray == NULL || sizeof(dataArrayLength) > sizeof(dataArray)) {
+        // Handle the error appropriately (e.g., return an error code)
+        return;
+    }
+
+    // Copy the data from the dataArray into chargerData while handling endianness
+    chargerData->header = (uint32_t)dataArray[0] |
+                         ((uint32_t)dataArray[1] << 8) |
+                         ((uint32_t)dataArray[2] << 16) |
+                         ((uint32_t)dataArray[3] << 24);
+
+    chargerData->batteryVoltage = (uint32_t)dataArray[4] |
+                                 ((uint32_t)dataArray[5] << 8) |
+                                 ((uint32_t)dataArray[6] << 16) |
+                                 ((uint32_t)dataArray[7] << 24);
+
+    chargerData->panelVoltage = (uint32_t)dataArray[8] |
+                               ((uint32_t)dataArray[9] << 8) |
+                               ((uint32_t)dataArray[10] << 16) |
+                               ((uint32_t)dataArray[11] << 24);
+
+    chargerData->chargerState = dataArray[12];
+    chargerData->pwm = (uint16_t)((uint16_t)dataArray[13] |
+                                ((uint16_t)dataArray[14] << 8));
+
+    chargerData->vdd = (uint32_t)dataArray[15] |
+                     ((uint32_t)dataArray[16] << 8) |
+                     ((uint32_t)dataArray[17] << 16) |
+                     ((uint32_t)dataArray[18] << 24);
+
+    chargerData->batteryTargetVoltage = (uint16_t)((uint16_t)dataArray[19] |
+                                               ((uint16_t)dataArray[20] << 8));
+
+    chargerData->loadState = dataArray[21];
+
+    chargerData->current = (int32_t)((int32_t)dataArray[22] |
+                                   ((int32_t)dataArray[23] << 8) |
+                                   ((int32_t)dataArray[24] << 16) |
+                                   ((int32_t)dataArray[25] << 24));
+
+    chargerData->commandCounter = dataArray[26];
+    chargerData->lastError = dataArray[27];
+
+    chargerData->tail = (uint16_t)((uint16_t)dataArray[28] |
+                               ((uint16_t)dataArray[29] << 8));
+}
+
+void cobs_decode(const uint8_t* encodedData, uint8_t encodedLength, uint8_t* decodedData, uint8_t* decodedLength) {
+    int readIndex = 0;
+    int writeIndex = 0;
+
+    while (readIndex < encodedLength) {
+        uint8_t code = encodedData[readIndex];
+
+        if (readIndex + code > encodedLength && code != 1) {
+            // If code is too large, it's an error.
+            // This can happen if there is missing data or a corrupted frame.
+            *decodedLength = 0; // Indicate an error
+            return;
+        }
+
+        readIndex++;
+
+        for (int i = 1; i < code; i++) {
+            decodedData[writeIndex++] = encodedData[readIndex++];
+        }
+
+        if (code < 0xFF && readIndex < encodedLength) {
+            decodedData[writeIndex++] = 0;
+        }
+    }
+
+    *decodedLength = writeIndex;
+}
+
+void cobsDecode(const uint8_t *ptr, int length, uint8_t *dst)
+{
+  const uint8_t *end = ptr + length;
+  int i, code;
+
+  while (ptr < end)
+  {
+    code = *ptr++;
+
+    for (i = 1; i < code; i++)
+      *dst++ = *ptr++;
+
+    if (code < 0xFF)
+      *dst++ = 0;
+  }
+}
 
 //
 // Called at event loop, checks for incoming data from the CC2530
@@ -106,11 +230,33 @@ void TCPLoop(void)
     }
     if (buf_len > 0) {
       AddLog(LOG_LEVEL_DEBUG_MORE, PSTR(D_LOG_TCP "from MCU: %*_H"), buf_len, tcp_buf);
-
+      
       for (uint32_t i=0; i<nitems(client_tcp); i++) {
         WiFiClient &client = client_tcp[i];
         if (client) { client.write(tcp_buf, buf_len); }
       }
+
+      for(uint8_t i = 0; i<buf_len; i++)
+      {
+        cobBuffer[writeindex] = tcp_buf[i];
+        writeindex = (writeindex+1)%COB_BUFFER_LEN;
+        if(tcp_buf[i] == 0)
+        {
+          datalen=writeindex;
+          writeindex=0;
+          cobs_decode(cobBuffer, datalen-1, decodeData, &decoded_len);
+          CommData chargerData;
+          chargerData.header = 0;
+          unpackData(decodeData, decoded_len, &chargerData);
+          if (chargerData.header == 0xdeadbeef)
+          {
+            AddLog(LOG_LEVEL_DEBUG_MORE, PSTR(D_LOG_TCP "Charger data %i %i %i %i %i %i %i %i %d %i %i %i"), chargerData.header, chargerData.batteryVoltage, chargerData.panelVoltage, chargerData.chargerState, chargerData.pwm, chargerData.vdd, chargerData.batteryTargetVoltage, chargerData.loadState, chargerData.current, chargerData.commandCounter, chargerData.lastError, chargerData.tail);
+            memcpy(&lastValidChargerData, &chargerData, sizeof(CommData));
+          }
+        }
+      }
+
+      
     }
 
     // handle data received from TCP
@@ -156,6 +302,7 @@ void TCPInit(void) {
       AddLog(LOG_LEVEL_DEBUG, PSTR(D_LOG_TCP "failed init serial"));
     }
   }
+  memset(&lastValidChargerData, 0, sizeof(CommData));
 }
 
 /*********************************************************************************************\
@@ -275,6 +422,15 @@ void CmndTCPConnect(void) {
   ResponseCmndDone();
 }
 
+void TCPJsonAppend(void)
+{
+  //AddLog(LOG_LEVEL_INFO, PSTR(D_LOG_TCP "TCP server aa"));
+  ResponseAppend_P(PSTR(",\"Charge Controller\":{\"Battery Voltage\":\"%i\",\"Panel Voltage\":%i,\"Charger State\":%i,\"PWM\":%i,\"Vdd\":%i,\"Target Voltage\":%i,\"Load State\":%i,\"Current\":%i,\"Comm. Counter\":%i,\"lastError\":%i,}"),
+          lastValidChargerData.batteryVoltage, lastValidChargerData.panelVoltage, lastValidChargerData.chargerState, lastValidChargerData.pwm, lastValidChargerData.vdd, lastValidChargerData.batteryTargetVoltage, lastValidChargerData.loadState, lastValidChargerData.current, lastValidChargerData.commandCounter, lastValidChargerData.lastError);
+  AddLog(LOG_LEVEL_DEBUG_MORE, PSTR(D_LOG_TCP "TCP Sending tele"));
+}
+
+
 /*********************************************************************************************\
  * Interface
 \*********************************************************************************************/
@@ -284,6 +440,9 @@ bool Xdrv41(uint32_t function)
   bool result = false;
 
   switch (function) {
+    case FUNC_JSON_APPEND:
+      TCPJsonAppend();
+      break;
     case FUNC_LOOP:
       TCPLoop();
       break;

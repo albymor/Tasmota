@@ -52,12 +52,15 @@ typedef struct
 	uint16_t pwm;
 	uint32_t vdd;
 	uint16_t batteryTargetVoltage;
-	uint8_t loadState;
+	uint16_t loadState;
 	int32_t current;
 	uint8_t commandCounter;
 	uint8_t lastError;
 	uint16_t tail;
 } CommData;
+
+char *LoadStates[] = {"Startup Wait", "Off", "On", "Force Off", "Force On"};
+char *ChargerStates[] = {"Off", "Standby", "Float", "On", "Force", "Topping", "Test" };
 
 CommData chargerData, lastValidChargerData;
 
@@ -114,18 +117,19 @@ void unpackData(const uint8_t* dataArray, uint8_t dataArrayLength, CommData* cha
     chargerData->batteryTargetVoltage = (uint16_t)((uint16_t)dataArray[19] |
                                                ((uint16_t)dataArray[20] << 8));
 
-    chargerData->loadState = dataArray[21];
+    chargerData->loadState = (uint16_t)((uint16_t)dataArray[21] |
+                              ((uint16_t)dataArray[22] << 8));
 
-    chargerData->current = (int32_t)((int32_t)dataArray[22] |
-                                   ((int32_t)dataArray[23] << 8) |
-                                   ((int32_t)dataArray[24] << 16) |
-                                   ((int32_t)dataArray[25] << 24));
+    chargerData->current = (int32_t)((int32_t)dataArray[23] |
+                                   ((int32_t)dataArray[24] << 8) |
+                                   ((int32_t)dataArray[25] << 16) |
+                                   ((int32_t)dataArray[26] << 24));
 
-    chargerData->commandCounter = dataArray[26];
-    chargerData->lastError = dataArray[27];
+    chargerData->commandCounter = dataArray[27];
+    chargerData->lastError = dataArray[28];
 
-    chargerData->tail = (uint16_t)((uint16_t)dataArray[28] |
-                               ((uint16_t)dataArray[29] << 8));
+    chargerData->tail = (uint16_t)((uint16_t)dataArray[29] |
+                               ((uint16_t)dataArray[30] << 8));
 }
 
 void cobs_decode(const uint8_t* encodedData, uint8_t encodedLength, uint8_t* decodedData, uint8_t* decodedLength) {
@@ -248,6 +252,7 @@ void TCPLoop(void)
           CommData chargerData;
           chargerData.header = 0;
           unpackData(decodeData, decoded_len, &chargerData);
+          //memcpy(&chargerData, &decodeData, sizeof(CommData));
           if (chargerData.header == 0xdeadbeef)
           {
             AddLog(LOG_LEVEL_DEBUG_MORE, PSTR(D_LOG_TCP "Charger data %i %i %i %i %i %i %i %i %d %i %i %i"), chargerData.header, chargerData.batteryVoltage, chargerData.panelVoltage, chargerData.chargerState, chargerData.pwm, chargerData.vdd, chargerData.batteryTargetVoltage, chargerData.loadState, chargerData.current, chargerData.commandCounter, chargerData.lastError, chargerData.tail);
@@ -425,21 +430,25 @@ void CmndTCPConnect(void) {
 void TCPJsonAppend(void)
 {
   //AddLog(LOG_LEVEL_INFO, PSTR(D_LOG_TCP "TCP server aa"));
-  ResponseAppend_P(PSTR(",\"Charge Controller\":{\"Battery Voltage\":\"%i\",\"Panel Voltage\":%i,\"Charger State\":%i,\"PWM\":%i,\"Vdd\":%i,\"Target Voltage\":%i,\"Load State\":%i,\"Current\":%i,\"Comm Counter\":%i,\"lastError\":%i}"),
-          lastValidChargerData.batteryVoltage, lastValidChargerData.panelVoltage, lastValidChargerData.chargerState, lastValidChargerData.pwm, lastValidChargerData.vdd, lastValidChargerData.batteryTargetVoltage, lastValidChargerData.loadState, lastValidChargerData.current, lastValidChargerData.commandCounter, lastValidChargerData.lastError);
+  ResponseAppend_P(PSTR(",\"Charge Controller\":{\"Battery Voltage\":\"%i\",\"Panel Voltage\":%i,\"Charger State\":%i,\"PWM\":%i,\"Vdd\":%i,\"Target Voltage\":%i,\"Load State\":%i,\"Load1 State\":%i,\"Load2 State\":%i,\"Current\":%i,\"Comm Counter\":%i,\"lastError\":%i}"),
+          lastValidChargerData.batteryVoltage, lastValidChargerData.panelVoltage, lastValidChargerData.chargerState, lastValidChargerData.pwm, lastValidChargerData.vdd, lastValidChargerData.batteryTargetVoltage, lastValidChargerData.loadState & 0x7, (lastValidChargerData.loadState>>3) & 0x7, (lastValidChargerData.loadState>>6) & 0x7, lastValidChargerData.current, lastValidChargerData.commandCounter, lastValidChargerData.lastError);
   AddLog(LOG_LEVEL_DEBUG_MORE, PSTR(D_LOG_TCP "TCP Sending tele"));
 }
 
 void TCPWebsensors(void)
 {
+  uint8_t numLoadStates = sizeof(LoadStates) / sizeof(*LoadStates);
+  uint8_t numChargerStates = sizeof(ChargerStates) / sizeof(*ChargerStates);
   WSContentSend_Voltage("Battery", lastValidChargerData.batteryVoltage/1000.0);
   WSContentSend_Voltage("Panel", lastValidChargerData.panelVoltage/1000.0);
   WSContentSend_Voltage("Target", lastValidChargerData.batteryTargetVoltage/1000.0);
   WSContentSend_Voltage("Vdd", lastValidChargerData.vdd/1000.0);
   WSContentSend_CurrentMA("Charge", lastValidChargerData.current);
   WSContentSend_PD(PSTR("{s}PWM {m}%d"), lastValidChargerData.pwm);
-  WSContentSend_PD(PSTR("{s}Charger State {m}%d"), lastValidChargerData.chargerState);
-  WSContentSend_PD(PSTR("{s}Load State {m}%d"), lastValidChargerData.loadState);
+  WSContentSend_PD(PSTR("{s}Charger State {m}%s"), lastValidChargerData.chargerState < numChargerStates ? ChargerStates[lastValidChargerData.chargerState] : "Invalid");
+  WSContentSend_PD(PSTR("{s}Load State {m}%s"), (lastValidChargerData.loadState & 0x7) < numLoadStates ? LoadStates[lastValidChargerData.loadState & 0x7] : "Invalid" );
+  WSContentSend_PD(PSTR("{s}Load1 State {m}%s"), ((lastValidChargerData.loadState>>3) & 0x7) < numLoadStates ? LoadStates[(lastValidChargerData.loadState>>3) & 0x7] : "Invalid");
+  WSContentSend_PD(PSTR("{s}Load2 State {m}%s"), ((lastValidChargerData.loadState>>6) & 0x7) < numLoadStates ? LoadStates[(lastValidChargerData.loadState>>6) & 0x7] : "Invalid");
   WSContentSend_PD(PSTR("{s}Comm Counter {m}%d"), lastValidChargerData.commandCounter);
   WSContentSend_PD(PSTR("{s}Last Error {m}%d"), lastValidChargerData.lastError);
 }

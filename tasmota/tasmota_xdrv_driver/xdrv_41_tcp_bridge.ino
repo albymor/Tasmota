@@ -82,11 +82,11 @@ void unpackData(const uint8_t* dataArray, uint8_t dataArrayLength, CommData* cha
 TasmotaSerial *TCPSerial = nullptr;
 
 const char kTCPCommands[] PROGMEM = "TCP" "|"    // prefix
-  "Start" "|" "Baudrate" "|" "Config" "|" "Connect" "|" "LoadOn" "|" "LoadOff"
+  "Start" "|" "Baudrate" "|" "Config" "|" "Connect" "|" "LoadOn" "|" "LoadOff" "|" "ChargerOn" "|" "ChargerOff"
   ;
 
 void (* const TCPCommand[])(void) PROGMEM = {
-  &CmndTCPStart, &CmndTCPBaudrate, &CmndTCPConfig, &CmndTCPConnect, &CmndTCPLoadOn, &CmndTCPLoadOff
+  &CmndTCPStart, &CmndTCPBaudrate, &CmndTCPConfig, &CmndTCPConnect, &CmndTCPLoadOn, &CmndTCPLoadOff, &CmndTCPChargerOn, &CmndTCPChargerOff
   };
 
 
@@ -438,16 +438,25 @@ void CmndTCPConnect(void) {
 
 void TCPLoadmanager(uint8_t function)
 {
-  int32_t loadNumber = XdrvMailbox.payload;
+  
 
   if (!TCPSerial) { return; }
   
-  AddLog(LOG_LEVEL_INFO, PSTR(D_LOG_TCP "Changing state of load %d"), loadNumber);
 
   ChargerCommandData commandData;
   commandData.header = 0xdeadbeef;
   commandData.commandIndex = function;
-  commandData.commandData = loadNumber;
+  if(function == 0x09 || function == 0x07)
+  {
+    int32_t loadNumber = XdrvMailbox.payload;
+    commandData.commandData = loadNumber;
+    AddLog(LOG_LEVEL_INFO, PSTR(D_LOG_TCP "Changing state of load %d"), loadNumber);
+  }
+  else
+  {
+    commandData.commandData = 0;
+    AddLog(LOG_LEVEL_INFO, PSTR(D_LOG_TCP "Changing charger state"));
+  }
 
   uint8_t *commandDataPtr = (uint8_t*)&commandData;
   uint8_t commandDataLen = sizeof(ChargerCommandData);
@@ -466,6 +475,16 @@ void CmndTCPLoadOn(void)
 void CmndTCPLoadOff(void) 
 {
   TCPLoadmanager(0x07);  
+}
+
+void CmndTCPChargerOn(void) 
+{
+  TCPLoadmanager(0x01);  
+}
+
+void CmndTCPChargerOff(void) 
+{
+  TCPLoadmanager(0x0);  
 }
 
 void TCPJsonAppend(void)
